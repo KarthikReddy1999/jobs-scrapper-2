@@ -1,7 +1,9 @@
 name: Trigger Simplify Scrape
 
 on:
-  workflow_dispatch:  # manual trigger only — add schedule cron after HF Space is set up
+  schedule:
+    - cron: '0 2,8,14,20 * * *'  # 4x daily at 2am, 8am, 2pm, 8pm UTC (offset from other scrapers)
+  workflow_dispatch:
 
 jobs:
   scrape:

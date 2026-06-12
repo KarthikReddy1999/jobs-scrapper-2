@@ -4,6 +4,7 @@ import logging
 import os
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "jobscraper.settings")
+os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "true")
 import django
 django.setup()
 
