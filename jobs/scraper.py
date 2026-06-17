@@ -337,6 +337,27 @@ class SimplifyScraper:
 
         return self.state.jobs_saved - saved_before
 
+    def _scrape_role_requests(self, page, request_ctx) -> None:
+        from role_requests import fetch_pending_role_requests, notify_role_complete
+        pending = fetch_pending_role_requests()
+        if not pending:
+            return
+        logger.info("Role requests: %d role(s) to scrape", len(pending))
+        for req in pending:
+            self._check_stop()
+            role = req["normalized_role"]
+            terms = req["search_terms"] or []
+            saved_before = self.state.jobs_saved
+            for i, term in enumerate(terms):
+                self._check_stop()
+                try:
+                    self._process_keyword(page, request_ctx, term, i, len(terms))
+                except StopIteration:
+                    raise
+                except Exception as exc:
+                    logger.error("Role request term failed '%s': %s", term, exc)
+            notify_role_complete(role, self.state.jobs_saved - saved_before)
+
     def run(self):
         global _active_browser
         os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
@@ -387,6 +408,8 @@ class SimplifyScraper:
 
                 try:
                     self.api_key = self._capture_api_key(page)
+
+                    self._scrape_role_requests(page, request_ctx)
 
                     for ki in range(start_idx, total):
                         self._check_stop()
