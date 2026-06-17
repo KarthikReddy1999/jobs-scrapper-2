@@ -235,6 +235,8 @@ class SimplifyScraper:
         activity_ts = updated or start
         # Display: prefer start_date (when job went live), fallback to updated
         posted_ts = start or updated
+        raw_desc = doc.get("description") or doc.get("job_description") or ""
+        description = BeautifulSoup(raw_desc, "html.parser").get_text(separator="\n", strip=True) if raw_desc else ""
         return {
             "id": doc.get("id") or doc.get("posting_id"),
             "title": doc.get("title", "").strip(),
@@ -243,6 +245,7 @@ class SimplifyScraper:
             "locations": locs,
             "updated_date": activity_ts,
             "posted_ts": posted_ts,
+            "description": description,
         }
 
     def _process_keyword(self, page, request_ctx, keyword, ki, total_keywords, start_page=1):
@@ -312,6 +315,7 @@ class SimplifyScraper:
                         posted_time=posted_label,
                         posted_at=int(job["posted_ts"]),
                         simplify_job_id=jid,
+                        description=job.get("description", ""),
                     )
                 except IntegrityError:
                     self.state.jobs_skipped += 1
