@@ -194,24 +194,48 @@ class SimplifyScraper:
         result = data["results"][0]
         return result.get("hits", []), result.get("found", 0)
 
+    @staticmethod
+    def _extract_desc_from_html(html: str) -> str:
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in ["script", "style", "nav", "footer", "header"]:
+            for el in soup.find_all(tag):
+                el.decompose()
+        for el in soup.find_all(["div", "section", "article"], class_=True):
+            classes = " ".join(el.get("class", [])).lower()
+            if any(x in classes for x in ("job-description", "job_description", "jobdescription",
+                                           "description-text", "posting-description", "gh-content",
+                                           "opening-content", "job-details", "description__text")):
+                text = el.get_text(separator="\n", strip=True)
+                if len(text) > 200:
+                    return text[:8000]
+        main = soup.find("main")
+        if main:
+            text = main.get_text(separator="\n", strip=True)
+            if len(text) > 200:
+                return text[:8000]
+        return ""
+
     def _extract_apply_url(self, page, job_id):
         self._check_stop()
         click = f"https://simplify.jobs/jobs/click/{job_id}"
+        ats_desc = None
         try:
             if _should_stop():
-                return None
+                return None, None
             resp = page.context.request.get(click, max_redirects=15, timeout=45000)
             final = resp.url
             if is_blocked_apply_host(final):
-                return None
+                return None, None
             if resp.ok and is_valid_apply_url(final):
-                return final
+                extracted = self._extract_desc_from_html(resp.text())
+                return final, extracted or None
             page.goto(click, wait_until="domcontentloaded", timeout=45000)
             final = page.url
             if is_blocked_apply_host(final):
-                return None
+                return None, None
+            ats_desc = self._extract_desc_from_html(page.content()) or None
             if is_valid_apply_url(final):
-                return final
+                return final, ats_desc
             soup = BeautifulSoup(page.content(), "html.parser")
             for a in soup.find_all("a", href=True):
                 href = a["href"]
@@ -220,10 +244,10 @@ class SimplifyScraper:
                 if is_blocked_apply_host(href):
                     continue
                 if is_valid_apply_url(href):
-                    return href
+                    return href, ats_desc
         except Exception as exc:
             logger.warning("ATS fail %s: %s", job_id, exc)
-        return None
+        return None, None
 
     def _parse_hit(self, hit):
         doc = hit.get("document", hit)
@@ -292,7 +316,7 @@ class SimplifyScraper:
                 self.processed.add(jid)
                 self._human_delay(0.15, 0.5)
 
-                apply_url = self._extract_apply_url(page, jid)
+                apply_url, ats_desc = self._extract_apply_url(page, jid)
                 if not apply_url:
                     self.state.jobs_skipped += 1
                     self._save_state(jobs_skipped=self.state.jobs_skipped)
@@ -302,6 +326,10 @@ class SimplifyScraper:
                     self.state.jobs_skipped += 1
                     self._save_state(jobs_skipped=self.state.jobs_skipped)
                     continue
+
+                # Prefer ATS page description (full JD) over Typesense index (truncated)
+                search_desc = job.get("description", "")
+                description = ats_desc if (ats_desc and len(ats_desc) > len(search_desc)) else search_desc
 
                 close_old_connections()
                 try:
@@ -315,7 +343,7 @@ class SimplifyScraper:
                         posted_time=posted_label,
                         posted_at=int(job["posted_ts"]),
                         simplify_job_id=jid,
-                        description=job.get("description", ""),
+                        description=description,
                     )
                 except IntegrityError:
                     self.state.jobs_skipped += 1
