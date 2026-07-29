@@ -37,6 +37,34 @@ _ua = UserAgent()
 def _should_stop():
     return _stop_event.is_set() or is_stop_requested()
 
+
+_EXCLUDED_TITLE_KEYWORDS = {
+    "senior", "staff", "principal", "lead", "manager", "director",
+    "clearance", "secret", "top secret", "ts/sci", "dod", "defense",
+    "intelligence", "classified",
+}
+
+
+def _is_excluded_title(title):
+    lower = (title or "").lower()
+    return any(kw in lower for kw in _EXCLUDED_TITLE_KEYWORDS)
+
+
+def _requires_senior_experience(description):
+    """Safety net alongside the server-side experience_level filter already
+    in _search_jobs — catches cases where Simplify's own tagging misses a
+    role that's actually senior-level per the job description text."""
+    if not description:
+        return False
+    lower = description.lower()
+    senior_signals = [
+        "5+ years", "6+ years", "7+ years", "8+ years", "10+ years",
+        "5 or more years", "five or more years", "seven or more years",
+        "5 to ", "7 to ", "10 to ",
+    ]
+    return any(p in lower for p in senior_signals)
+
+
 JOBS_PER_PAGE = 20
 
 
@@ -308,6 +336,8 @@ class SimplifyScraper:
                     continue
                 if not is_within_24h(job["updated_date"]):
                     continue
+                if _is_excluded_title(job["title"]):
+                    continue
 
                 posted_label = format_posted_time(job["posted_ts"])
                 if not posted_label:
@@ -330,6 +360,11 @@ class SimplifyScraper:
                 # Prefer ATS page description (full JD) over Typesense index (truncated)
                 search_desc = job.get("description", "")
                 description = ats_desc if (ats_desc and len(ats_desc) > len(search_desc)) else search_desc
+
+                if _requires_senior_experience(description):
+                    self.state.jobs_skipped += 1
+                    self._save_state(jobs_skipped=self.state.jobs_skipped)
+                    continue
 
                 close_old_connections()
                 try:
